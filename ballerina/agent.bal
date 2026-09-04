@@ -413,30 +413,37 @@ public isolated distinct class Agent {
         if query is Resume {
             return self.resumeInternal(sessionId, query.decisions, context, td);
         }
-        // A prior call on this session may still be awaiting a human decision. Starting a
-        // fresh run regardless would silently orphan that pending approval (and, if this new
-        // run also happens to pause, `checkpointer.put` would overwrite it outright) - so
-        // check first, rather than let a new, unrelated turn interleave with an unresolved one.
-        PendingApproval?|Error existingApprovalResult = self.checkpointer.getCheckpoint(sessionId);
-        if existingApprovalResult is Error {
-            // Trace this earliest guard failure too, matching how `resumeInternal` opens its span
-            // before its own guards - otherwise a checkpoint-store failure here goes unobserved.
-            observe:InvokeAgentSpan errorSpan = observe:createInvokeAgentSpan(self.systemPrompt.role);
-            errorSpan.addId(self.uniqueId);
-            errorSpan.addSessionId(sessionId);
-            errorSpan.close(existingApprovalResult);
-            return existingApprovalResult;
-        }
-        if existingApprovalResult is PendingApproval {
-            if !isPendingApprovalHistoryValid(existingApprovalResult) {
-                log:printWarn("Clearing a corrupted pending approval to allow a new run", sessionId = sessionId);
-                Error? removeErr = self.checkpointer.removeCheckpoint(sessionId);
-                if removeErr is Error {
-                    log:printError("Failed to remove the corrupted pending approval", removeErr, sessionId = sessionId);
+        // Only an agent with at least one approval-gated tool can ever have paused, so only such an
+        // agent needs this guard. Skipping it otherwise keeps every non-HITL run off the checkpoint
+        // store entirely - no round trip, and no backing storage provisioned for a feature the
+        // application never uses.
+        if self.approvalRules.length() > 0 {
+            // A prior call on this session may still be awaiting a human decision. Starting a
+            // fresh run regardless would silently orphan that pending approval (and, if this new
+            // run also happens to pause, `checkpointer.put` would overwrite it outright) - so
+            // check first, rather than let a new, unrelated turn interleave with an unresolved one.
+            PendingApproval?|Error existingApprovalResult = self.checkpointer.getCheckpoint(sessionId);
+            if existingApprovalResult is Error {
+                // Trace this earliest guard failure too, matching how `resumeInternal` opens its span
+                // before its own guards - otherwise a checkpoint-store failure here goes unobserved.
+                observe:InvokeAgentSpan errorSpan = observe:createInvokeAgentSpan(self.systemPrompt.role);
+                errorSpan.addId(self.uniqueId);
+                errorSpan.addSessionId(sessionId);
+                errorSpan.close(existingApprovalResult);
+                return existingApprovalResult;
+            }
+            if existingApprovalResult is PendingApproval {
+                if !isPendingApprovalHistoryValid(existingApprovalResult) {
+                    log:printWarn("Clearing a corrupted pending approval to allow a new run", sessionId = sessionId);
+                    Error? removeErr = self.checkpointer.removeCheckpoint(sessionId);
+                    if removeErr is Error {
+                        log:printError("Failed to remove the corrupted pending approval", removeErr,
+                                sessionId = sessionId);
+                    }
+                    // Fall through - proceed with a fresh run below.
+                } else {
+                    return self.buildPendingApprovalTrace(existingApprovalResult, td, toString(query));
                 }
-                // Fall through - proceed with a fresh run below.
-            } else {
-                return self.buildPendingApprovalTrace(existingApprovalResult, td, toString(query));
             }
         }
 

@@ -35,6 +35,20 @@ final ToolConfig hitlRefundTool = {
     requiresApproval: true
 };
 
+// The same tool with no approval gate (`requiresApproval` left at its `false` default), so an agent
+// built over it can never pause - used to prove such an agent never touches the checkpoint store.
+final ToolConfig ungatedRefundTool = {
+    name: "issueRefund",
+    description: "Issues a refund for an order",
+    parameters: {
+        properties: {
+            orderId: {'type: STRING},
+            amount: {'type: NUMBER}
+        }
+    },
+    caller: issueRefundMock
+};
+
 // Proposes the same `issueRefund` tool call on the first turn, then answers with the
 // resulting observation once one is present in history (i.e., after the human's decision
 // on the pending approval has been applied).
@@ -981,6 +995,7 @@ isolated class CheckpointCapableStore {
     *ShortTermMemoryStore;
     private final InMemoryShortTermMemoryStore messages;
     private boolean putCheckpointCalled = false;
+    private boolean getCheckpointCalled = false;
 
     isolated function init() returns MemoryError? {
         self.messages = check new InMemoryShortTermMemoryStore();
@@ -1009,8 +1024,12 @@ isolated class CheckpointCapableStore {
         }
         return self.messages.putCheckpoint(approval);
     }
-    public isolated function getCheckpoint(string sessionId) returns PendingApproval?|Error =>
-        self.messages.getCheckpoint(sessionId);
+    public isolated function getCheckpoint(string sessionId) returns PendingApproval?|Error {
+        lock {
+            self.getCheckpointCalled = true;
+        }
+        return self.messages.getCheckpoint(sessionId);
+    }
     public isolated function removeCheckpoint(string sessionId) returns Error? =>
         self.messages.removeCheckpoint(sessionId);
     public isolated function takeCheckpoint(string sessionId) returns PendingApproval?|Error =>
@@ -1019,6 +1038,12 @@ isolated class CheckpointCapableStore {
     public isolated function wasPutCheckpointCalled() returns boolean {
         lock {
             return self.putCheckpointCalled;
+        }
+    }
+
+    public isolated function wasGetCheckpointCalled() returns boolean {
+        lock {
+            return self.getCheckpointCalled;
         }
     }
 }
@@ -1053,6 +1078,28 @@ function testCheckpointDelegatesToCheckpointerCapableStore() returns error? {
     // On completion the checkpoint was claimed (removed) from the store.
     PendingApproval? afterResume = check store.getCheckpoint(sessionId);
     test:assertEquals(afterResume, ());
+}
+
+@test:Config
+function testAgentWithoutApprovalGatedToolNeverReadsCheckpoint() returns error? {
+    CheckpointCapableStore store = check new;
+    ShortTermMemory memory = check new (store = store);
+    Agent agent = check new ({
+        systemPrompt: {role: "Test Agent", instructions: "Handle refunds"},
+        model: new HitlMockLLM(),
+        tools: [ungatedRefundTool],
+        memory
+    });
+
+    // No tool here declares an approval gate, so the run cannot pause and no checkpoint could ever
+    // exist for this session. The agent must not consult the checkpoint store at all - a database
+    // backed store would otherwise be asked for (and, before this guard, would provision) a
+    // checkpoint table that this application never uses.
+    string result = check agent.run("Refund order ORD-1", "hitl-no-gate-session");
+    test:assertTrue(result.includes("Refunded 50.0 for ORD-1"), result);
+    test:assertFalse(store.wasGetCheckpointCalled(),
+            "An agent with no approval-gated tool must not read the checkpoint store");
+    test:assertFalse(store.wasPutCheckpointCalled());
 }
 
 // A custom `Memory` that is not a `ShortTermMemory`, to exercise the agent's in-memory checkpoint
