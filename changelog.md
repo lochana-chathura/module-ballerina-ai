@@ -5,6 +5,21 @@ This file documents all significant changes made to the Ballerina AI package acr
 ## [Unreleased]
 
 ### Added
+- [Add Support for `anydata` Input in Agent](https://github.com/wso2/product-integrator/issues/2300)
+- [Add `Tag` Marker Type](https://github.com/wso2/product-integrator/issues/2300)
+
+### Changed
+- **Breaking:** `Resume` (a closed record) now has an additional `tag` field to distinguish it from an `anydata` query, and is now a `readonly` record, so `decisions` must be passed as a `readonly` `map<HumanResponse>`. ([wso2/product-integrator#2300](https://github.com/wso2/product-integrator/issues/2300))
+- **Breaking:** `DecisionMessage` is now a `readonly` record, so `decisions` must be passed as a `readonly` `map<HumanResponse>`. ([wso2/product-integrator#2300](https://github.com/wso2/product-integrator/issues/2300))
+
+## [1.14.1] - 2026-08-25
+
+### Fixed
+- [Fix Empty Module `init` Function Generated for Modules That Define Only an Agent Class or an Agent Tool](https://github.com/ballerina-platform/ballerina-library/issues/9098)
+
+## [1.14.0] - 2026-08-14
+
+### Added
 - [Add Agent Configuration to Execute Tool Calls in Parallel](https://github.com/wso2/product-integrator/issues/1856)
 - [Add Structured Human Decision Support to Chat Service via a `decision` Resource](https://github.com/ballerina-platform/ballerina-library/issues/9006)
 
@@ -19,9 +34,11 @@ This file documents all significant changes made to the Ballerina AI package acr
 
 ### Added
 - [Add Human-in-the-Loop Support to Pause the Agent for Approval Before Executing Sensitive Tools](https://github.com/wso2/product-integrator/issues/2006)
+- [Introduce an Object Type for Agents to Support Sharable, Reusable Agent Definitions](https://github.com/ballerina-platform/ballerina-library/issues/9097)
 
-### Changed
+### Updated
 - **Breaking:** `ShortTermMemoryStore` now requires four checkpoint methods (`putCheckpoint`, `getCheckpoint`, `removeCheckpoint`, and `takeCheckpoint`) to support Human-in-the-Loop pauses. Existing custom `ShortTermMemoryStore` implementations must add these methods to keep conforming. ([#148](https://github.com/ballerina-platform/module-ballerina-ai/pull/148))
+- **Breaking:** The `AgentType` enum (`REACT_AGENT`, `FUNCTION_CALL_AGENT`) has been replaced by the `DependentlyTypedAgent|FixedTypedAgent` object-type union, so that custom agent definitions can be subtypes of `ai:AgentType`. ([#141](https://github.com/ballerina-platform/module-ballerina-ai/pull/141))
 
 ## [1.11.1] - 2026-04-16
 

@@ -160,16 +160,16 @@ public type AgentMetadataConfig record {|
 public type DependentlyTypedAgent distinct isolated object {
     # Executes the agent for the given query and binds the result to the inferred return type.
     #
-    # Pass a `string`/`Prompt` to start a new turn, or a `Resume` (the human's decisions on a
+    # Pass a `anydata`/`Prompt` to start a new turn, or a `Resume` (the human's decisions on a
     # previously paused run) to continue a run that paused for human approval. The input type is
     # what distinguishes the two - there is no separate resume operation.
     #
-    # + query - A query to start a new turn (`string`/`Prompt`), or a `Resume` to continue a paused run
+    # + query - A query to start a new turn (`anydata`/`Prompt`), or a `Resume` to continue a paused run
     # + sessionId - The ID associated with the agent memory
     # + context - The additional context that can be used during agent tool execution
     # + td - Type descriptor specifying the expected return type format
     # + return - The agent's response bound to `td`, or an `Error`
-    public isolated function run(@display {label: "Query"} string|Prompt|Resume query,
+    public isolated function run(@display {label: "Query"} anydata|Prompt|Resume query,
             @display {label: "Session ID"} string sessionId = DEFAULT_SESSION_ID,
             Context context = new,
             typedesc<Trace|anydata> td = <>) returns td|Error;
@@ -385,7 +385,7 @@ public isolated distinct class Agent {
 
     # Executes the agent for a given query.
     #
-    # Pass a `string`/`Prompt` to start a new turn, or a `Resume` (the human's decisions on a
+    # Pass a `anydata`/`Prompt` to start a new turn, or a `Resume` (the human's decisions on a
     # previously paused run) to continue a run that paused for human approval on this session. The
     # input type is what distinguishes a fresh turn from a resume - there is no separate resume
     # operation. A `Resume` for a session with no pending approval fails with `ApprovalNotFoundError`.
@@ -398,21 +398,28 @@ public isolated distinct class Agent {
     # + context - The additional context that can be used during agent tool execution
     # + td - Type descriptor specifying the expected return type format
     # + return - The agent's response or an error
-    public isolated function run(@display {label: "Query"} string|Prompt|Resume query,
+    public isolated function run(@display {label: "Query"} anydata|Prompt|Resume query,
             @display {label: "Session ID"} string sessionId = DEFAULT_SESSION_ID,
             Context context = new,
             typedesc<Trace|anydata> td = <>) returns td|Error = @java:Method {
         'class: "io.ballerina.stdlib.ai.Agent"
     } external;
 
-    private isolated function runInternal(@display {label: "Query"} string|Prompt|Resume query,
+    private isolated function runInternal(@display {label: "Query"} anydata|Prompt|Resume query,
             @display {label: "Session ID"} string sessionId = DEFAULT_SESSION_ID,
             Context context = new, typedesc<Trace|anydata> td = string) returns Trace|anydata|Error {
+        // `anydata` includes `()`, so this is not caught at compile time - a nil query would
+        // otherwise silently run an empty-prompt turn instead of failing fast.
+        if query is () {
+            return error("Query must not be nil.");
+        }
+
         // A `Resume` input continues a run that paused for human approval instead of starting a
         // new turn; the input type is the sole discriminator between the two.
         if query is Resume {
             return self.resumeInternal(sessionId, query.decisions, context, td);
         }
+
         // A prior call on this session may still be awaiting a human decision. Starting a
         // fresh run regardless would silently orphan that pending approval (and, if this new
         // run also happens to pause, `checkpointer.put` would overwrite it outright) - so
@@ -467,12 +474,12 @@ public isolated distinct class Agent {
             systemPrompt += getStructuredOutputInstruction();
         }
         span.addSystemInstruction(systemPrompt);
-
+        string|Prompt queryValue = query is Prompt ? query : query.toString();
         Credential? & readonly agentCredential = self.agentCredential;
         string? agentId = agentCredential is Credential ? agentCredential.id : ();
-        ExecutionTrace executionTrace = run(self, systemPrompt, query, self.maxIter, self.verbose, agentId,
+        ExecutionTrace executionTrace = run(self, systemPrompt, queryValue, self.maxIter, self.verbose, agentId,
             sessionId, context, executionId, startTime, responseSchema);
-        ChatUserMessage userMessage = {role: USER, content: query};
+        ChatUserMessage userMessage = {role: USER, content: queryValue};
         return self.buildOutcome(executionId, userMessage, executionTrace, startTime, td, span, sessionId,
             "Agent execution paused pending human approval",
             "Agent execution completed successfully",
